@@ -24,7 +24,10 @@ import java.util.concurrent.TimeUnit;
 import model.Device;
 import model.Sensor;
 import model.SensorData;
+import org.apache.edgent.connectors.mqtt.MqttStreams;
+import org.apache.edgent.function.Functions;
 import org.apache.edgent.topology.TStream;
+import org.apache.edgent.topology.TWindow;
 import org.apache.edgent.topology.Topology;
 import rx.Single;
 
@@ -49,7 +52,7 @@ public class ReactiveController extends AbstractVerticle {
     private String gatewayID;
     private MqttClient mqttClient;
     private MqttClientOptions mqttOptions;
-    
+    private MqttStreams connector;
 
     public static void main(String[] args) {
         Runner.runExample(ReactiveController.class);
@@ -65,8 +68,103 @@ public class ReactiveController extends AbstractVerticle {
             ControllerEdgent controlEdgent = new ControllerEdgent();
             Topology topologyFilter = controlEdgent.createTopology();
             
-            jsonDevices = "[{id:ufbaino01, latitude:53.290411, longitude:-9.074406, sensors:[{id:temperatureSensor, type:Thermometer, collection_time:30000, publishing_time: 60000}, {id:humiditySensor, type:HumiditySensor, collection_time:30000, publishing_time: 60000}]},{id:ufbaino02, latitude:53.2865012, longitude:-9.0712183,sensors:[{id:temperatureSensor, type:Thermometer, collection_time:30000, publishing_time: 60000}, {id:currentSensor01, type:EnergyMeter, collection_time:1000, publishing_time: 60000}]}, {id:ufbaino03, latitude:53.2865015, longitude:-9.0712185,sensors:[{id:temperatureSensor, type:Thermometer, collection_time:30000, publishing_time: 60000}, {id:currentSensor01, type:HumiditySensor, collection_time:1000, publishing_time: 60000}]}]";
+            vertx.runOnContext((e) -> {
+                this.connector = new MqttStreams(topologyFilter, "tcp://localhost:1883", "device1");   
+                
+                TStream<String> temp = this.connector.subscribe("dev/ufbaino01/RES", 1);
+                
+                TWindow<String, Integer> tempWindowSensorData = temp.last(10, Functions.unpartitioned());
+                TStream<List<SensorData>> tempSensorData = tempWindowSensorData.batch((tuple, u) -> {
+                    List<SensorData> listData = new ArrayList<SensorData>();
+                    SensorData sensorData = null;
+                    for (String string : tuple) {
+                        
+                        if(TATUWrapper.isValidTATUAnswer(string)){
+                                
+                                
+                            JsonParser parser = new JsonParser();
 
+                            JsonElement element = parser.parse(string);
+                            JsonObject jObject = element.getAsJsonObject();
+
+
+                            JsonObject body = jObject.getAsJsonObject("BODY");
+                                                        
+                            JsonArray jsonArray = body.getAsJsonArray("temperatureSensor");
+
+                            if(jsonArray != null){
+                                
+                                for (int i = 0; i < jsonArray.size(); i++) {
+                                    JsonElement jsonElement = jsonArray.get(i);
+                                    String value = String.valueOf(jsonElement.getAsDouble());
+                                    //System.out.println(value);
+                                    sensorData = new SensorData(value, LocalDateTime.now(), null, null, 0);  
+                                    if(sensorData != null) 
+                                        listData.add(sensorData);
+                                }
+                                
+                            }
+                        }
+                    }
+                    
+                   return listData;
+                });
+                
+                //tempWindowSensorData.feeder().filter(tuple -> Double.parseDouble(tuple.getValue()) > 25 && Double.parseDouble(tuple.getValue()) < 37);   
+                //tempSensorData = paserTatuStreamFlow(tempSensorData);
+                tempSensorData.sink(tuple -> tuple.stream().forEach((t) -> {
+                    System.out.println("Sink 1 " + t.getValue());
+                }));
+                
+              TStream<JsonObject> sensorDataJsonStream = tempSensorData.map((sensorData) -> {
+                    //List<JsonObject> output = new ArrayList<JsonObject>();
+                     
+                     
+                     JsonObject sensorDataJson = new JsonObject();
+                     SensorData index = sensorData.get(1);
+                     //System.out.println("print " + sensorData.get(1).getValue());
+                     //String deviceId = index.getDevice().getDeviceId();
+                     //String sensorId = index.getSensor().getSensorid();
+                     //String dateTime = index.getLocalDateTime().toString();
+                     //System.out.println("deviceId: " + deviceId);
+                     
+                     //String valueSensor = index.getValue();
+                     //sensorDataJson.addProperty("deviceId", deviceId);
+                     //sensorDataJson.addProperty("sensorId", sensorId);
+                     //sensorDataJson.addProperty("localDateTime", dateTime);
+                     //sensorDataJson.addProperty("valueSensor", valueSensor);
+                     
+                     //System.out.println("deviceId: " + deviceId);
+                    JsonArray arrayData = new JsonArray();
+                    for (SensorData sensorDataColect : sensorData) {
+                        if(Double.parseDouble(sensorDataColect.getValue())<35)
+                            arrayData.add(sensorDataColect.getValue());
+                    //output.add(sensorDataJson);
+                    }   
+              
+                    sensorDataJson.add("valueSensor", arrayData);
+                    //System.out.println(sensorDataJson);
+                    return sensorDataJson;
+                });
+               
+               sensorDataJsonStream.sink((t) -> {
+                    System.out.println("Sink 2 " + t);
+                    vertx.eventBus().send("webmedia",  t);
+               });
+               
+               //tempSensorData.sink(tuple -> tuple.stream().forEach((t) -> {
+               //     System.out.println("Sink 1 " + t.getValue());
+               // }));
+                 
+                
+                controlEdgent.deployTopology(topologyFilter);
+                System.out.println("Finish");
+                
+            });
+           
+            jsonDevices = "[{id:ufbaino01, latitude:53.290411, longitude:-9.074406, sensors:[{id:temperatureSensor, type:Thermometer, collection_time:30000, publishing_time: 60000}, {id:humiditySensor, type:HumiditySensor, collection_time:30000, publishing_time: 60000}]},{id:ufbaino02, latitude:53.2865012, longitude:-9.0712183,sensors:[{id:temperatureSensor, type:Thermometer, collection_time:30000, publishing_time: 60000}, {id:currentSensor01, type:EnergyMeter, collection_time:1000, publishing_time: 60000}]}, {id:ufbaino03, latitude:53.2865015, longitude:-9.0712185,sensors:[{id:temperatureSensor, type:Thermometer, collection_time:30000, publishing_time: 60000}, {id:currentSensor01, type:HumiditySensor, collection_time:1000, publishing_time: 60000}]}]";
+            
+            
             System.out.println("subscribing in topics:");
 
             loadDevices();
@@ -84,28 +182,25 @@ public class ReactiveController extends AbstractVerticle {
 
             });
             
-            String sensorData;
+            
+            //TStream<String> temp = this.connector.subscribe("dev/ufbaino01/RES/s", 1);
+            //TStream<String> temp = topologyFilter.strings("");
             vertx.setPeriodic(2000, id  -> {
-            this.mqttClient.publishHandler(hndlr -> {
-                System.out.println("There are new message in topic: " + hndlr.topicName());
-                System.out.println("Content(as string) of the message: " + hndlr.payload().toString());
-                System.out.println("QoS: " + hndlr.qosLevel());
-                vertx.eventBus().send("webmedia",  hndlr.topicName() + hndlr.payload().toString() );
+                this.mqttClient.publishHandler(hndlr -> {
+                    System.out.println("There are new message in topic: " + hndlr.topicName());
+                    System.out.println("Content(as string) of the message: " + hndlr.payload().toString());
+                    System.out.println("QoS: " + hndlr.qosLevel());
+                    vertx.eventBus().send("webmedia",  hndlr.topicName() + hndlr.payload().toString() );
                 
-                TStream<String> temp = topologyFilter.strings(hndlr.payload().toString());
-                TStream<SensorData> tempSensorData = paserTatuStreamFlow(temp);
-                tempSensorData.sink(tuple -> System.out.println("Before Filter " + tuple.getValue()));
-                tempSensorData = tempSensorData.filter(tuple -> Double.parseDouble(tuple.getValue()) > 25 && Double.parseDouble(tuple.getValue()) < 37);
-                tempSensorData.sink(tuple -> System.out.println("After Filter " + tuple.getValue()));
-
-                controlEdgent.deployTopology(topologyFilter);
-               
-                System.out.println("Finish");
-                }).subscribe("dev/ufbaino01/RES", 1);;
+                
+                }).subscribe("dev/ufbaino01/RES", 1);
+                
+                
+                
              });
             
-            //filterData();
             
+            System.out.println("Finish");
         } catch (Exception e) {
             System.out.println("controller.ReactiveController.start()" + e.getMessage());
         }
@@ -114,8 +209,9 @@ public class ReactiveController extends AbstractVerticle {
         
         
     }
+    
    
-     private TStream<SensorData> paserTatuStreamFlow(TStream<String> tStream){
+    private TStream<SensorData> paserTatuStreamFlow(TStream<String> tStream){
       
 
        TStream<SensorData> tStreamSensorData = tStream.map(tuple -> {

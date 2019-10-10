@@ -130,6 +130,11 @@
             <scope>compile</scope>
         </dependency>
         
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-reactive-streams</artifactId>
+            <version>3.8.2</version>
+        </dependency>
         
         
         

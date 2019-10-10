@@ -85,6 +85,20 @@ public class SensorData {
     public void setSensor(Sensor sensor) {
         this.sensor = sensor;
     }
+
+    /**
+     * @return the device
+     */
+    public Device getDevice() {
+        return device;
+    }
+
+    /**
+     * @return the sensor
+     */
+    public Sensor getSensor() {
+        return sensor;
+    }
     
     
     
